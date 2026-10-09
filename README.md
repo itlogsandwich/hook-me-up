@@ -1,8 +1,9 @@
-# pr-notify-dc
+# Hook Me Up
 
-Posts a compact Discord embed when a pull request is opened, updated, merged, or closed. A small Rust binary run from
-a GitHub Actions workflow: it reads the event at `GITHUB_EVENT_PATH` and POSTs to a
-Discord webhook.
+Send GitHub activity to Discord. Hook Me Up posts a compact embed when a pull request
+is opened, updated, merged, or closed, or when an issue is opened, edited, closed, or
+reopened. The small Rust binary runs from a GitHub Actions workflow, reads the event at
+`GITHUB_EVENT_PATH`, and POSTs to a Discord webhook.
 
 Message format:
 
@@ -29,42 +30,29 @@ capped to Discord's 256, 1,024, and 2,048-character limits.
 1. Create a Discord webhook for the target channel.
 2. In your repo, add an environment named `discord-notify` with a secret
    `DISCORD_WEBHOOK_URL`.
-3. Add `.github/workflows/notify-pr.yml`:
+3. Copy [`example.yml`](example.yml) to `.github/workflows/notify-discord.yml` in
+   your repository. Remove either trigger if you only want pull-request or issue
+   notifications.
 
 ```yaml
-name: Notify Discord on PR
-
 on:
   pull_request_target:
     types: [opened, synchronize, edited, closed]
     branches: [develop, main]
-
-permissions:
-  contents: read
-
-jobs:
-  notify:
-    if: github.event.pull_request.user.login != 'dependabot[bot]'
-    runs-on: ubuntu-24.04
-    environment:
-      name: discord-notify
-      deployment: false
-    steps:
-      # Checks out the notifier, never the pull request's code: the job holds the
-      # webhook secret. Pin `ref` to a tag or SHA if you want releases, not latest.
-      - uses: actions/checkout@v7
-        with:
-          repository: itlogsandwich/pr-notify-dc
-          ref: main
-          persist-credentials: false
-      - run: cargo run --locked --quiet
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+  issues:
+    types: [opened, edited, closed, reopened]
 ```
 
 `pull_request_target` runs the workflow from your default branch with access to the
-secret; the PR's own code is never checked out or executed. `ref: main` tracks the
-latest version of this notifier — pin a tag or commit SHA instead if you want to
+secret; the PR's own code is never checked out or executed. Public repositories may
+need to explicitly allow this event in their Actions policy; see GitHub's
+[`pull_request_target` security guidance](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target).
+
+Normal repository issues still emit issue events when they are shown on a GitHub
+Project board. Project-only draft items and board status changes are not repository
+issue events.
+
+`ref: main` tracks the latest version of this notifier — pin a tag or commit SHA to
 control upgrades.
 
 ## Development

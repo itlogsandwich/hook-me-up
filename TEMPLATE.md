@@ -9,3 +9,6 @@ PR by AUTHOR
 
 `OPENED`, `CHANGES PUSHED`, `EDITED`, `MERGED`, and `CLOSED` each use a distinct card color.
 Edited cards state whether the title, description, or target branch changed.
+
+Issue cards use the same compact layout with `ISSUE OPENED`, `ISSUE EDITED`,
+`ISSUE CLOSED`, and `ISSUE REOPENED` labels.

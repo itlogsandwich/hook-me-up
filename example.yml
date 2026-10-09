@@ -1,0 +1,29 @@
+name: Notify Discord
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, edited, closed]
+    branches: [develop, main]
+  issues:
+    types: [opened, edited, closed, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    environment:
+      name: discord-notify
+      deployment: false
+    steps:
+      # Checks out the notifier, never pull-request code that could access the secret.
+      - uses: actions/checkout@v7
+        with:
+          repository: itlogsandwich/pr-notify-dc
+          ref: main
+          persist-credentials: false
+      - run: cargo run --locked --quiet
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
