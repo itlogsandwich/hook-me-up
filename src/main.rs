@@ -3,7 +3,7 @@ use std::{env, error::Error, fs, time::Duration};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let event: Value = serde_json::from_slice(&fs::read(env::var("GITHUB_EVENT_PATH")?)?)?;
-    let content = message(&event)?;
+    let payload = payload(&event)?;
     let webhook = env::var("DISCORD_WEBHOOK_URL")?;
     let client = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(10)))
@@ -12,25 +12,23 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     match client
         .post(format!("{webhook}?wait=true"))
-        .send_json(json!({
-            "content": content,
-            "allowed_mentions": { "parse": [] },
-        })) {
+        .send_json(payload)
+    {
         Ok(_) => Ok(()),
         Err(ureq::Error::StatusCode(code)) => Err(format!("Discord returned HTTP {code}").into()),
         Err(_) => Err("Discord request failed".into()),
     }
 }
 
-fn message(event: &Value) -> Result<String, Box<dyn Error>> {
+fn payload(event: &Value) -> Result<Value, Box<dyn Error>> {
     let pr = &event["pull_request"];
-    let event_label = match event["action"].as_str() {
-        Some("opened") => "OPENED",
-        Some("synchronize") => "CHANGES PUSHED",
-        Some("edited") => "EDITED",
+    let (event_label, color) = match event["action"].as_str() {
+        Some("opened") => ("OPENED", 0x238636),
+        Some("synchronize") => ("CHANGES PUSHED", 0x58a6ff),
+        Some("edited") => ("EDITED", 0xd29922),
         Some("closed") => match pr["merged"].as_bool() {
-            Some(true) => "MERGED",
-            Some(false) => "CLOSED",
+            Some(true) => ("MERGED", 0x8957e5),
+            Some(false) => ("CLOSED", 0x8b949e),
             None => return Err("missing merged status for closed PR".into()),
         },
         _ => return Err("expected a supported pull request event".into()),
@@ -39,46 +37,83 @@ fn message(event: &Value) -> Result<String, Box<dyn Error>> {
     let title = pr["title"].as_str().ok_or("missing PR title")?;
     let url = pr["html_url"].as_str().ok_or("missing PR URL")?;
     let author = pr["user"]["login"].as_str().ok_or("missing PR author")?;
-    let created = pr["created_at"]
-        .as_str()
-        .ok_or("missing PR creation date")?;
-    let date = created.get(..10).ok_or("invalid PR creation date")?;
-    let description = pr["body"]
-        .as_str()
-        .unwrap_or("")
+    let title = truncate(
+        &format!("{event_label} · #{number} {}", single_line(title)),
+        256,
+    );
+    let mut embed = json!({
+        "title": title,
+        "url": url,
+        "color": color,
+        "footer": { "text": truncate(&format!("PR by {author}"), 2048) },
+    });
+    let mut description = Vec::new();
+
+    match event["action"].as_str() {
+        Some("opened") => {
+            if let Some(summary) = summary(pr) {
+                description.push(summary);
+            }
+            if let Some(reviewers) = requested_reviewers(pr) {
+                embed["fields"] = json!([{
+                    "name": "Reviewers",
+                    "value": truncate(&reviewers, 1024),
+                    "inline": true,
+                }]);
+            }
+        }
+        Some("edited") => {
+            description.push(edit_summary(event));
+            if event["changes"].get("body").is_some()
+                && let Some(summary) = summary(pr)
+            {
+                description.push(summary);
+            }
+        }
+        _ => {}
+    }
+
+    if !description.is_empty() {
+        embed["description"] = Value::String(description.join("\n"));
+    }
+
+    Ok(json!({
+        "embeds": [embed],
+        "allowed_mentions": { "parse": [] },
+    }))
+}
+
+fn summary(pr: &Value) -> Option<String> {
+    pr["body"]
+        .as_str()?
         .lines()
         .map(|line| line.trim().trim_start_matches('\u{feff}').trim())
         .find(|line| !line.is_empty() && !line.starts_with('#'))
-        .unwrap_or("No description provided.")
-        .chars()
-        .take(240)
-        .collect::<String>();
-    let reviewers = requested_reviewers(pr);
-
-    let after = format!(
-        " #{number}]({url})\n**DESCRIPTION**: {description}\n**STATUS**: {event_label}\n**AUTHOR**: {author}\n**REVIEWER**: {reviewers}\n**DATE**: {date}"
-    );
-    let title_space = 2000usize
-        .checked_sub("**PR**: [".len() + after.chars().count())
-        .ok_or("PR metadata exceeds Discord message limit")?;
-    // Discord ignores backslash escapes inside a masked-link label, so `\[` would show the
-    // backslash and a bare `]` would end the link early: swap brackets for parentheses.
-    let linked_title: String = title
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .map(|ch| match ch {
-            '[' => '(',
-            ']' => ')',
-            other => other,
-        })
-        .take(title_space)
-        .collect();
-    Ok(format!("**PR**: [{linked_title}{after}"))
+        .map(|line| truncate(line, 240))
 }
 
-fn requested_reviewers(pr: &Value) -> String {
+fn edit_summary(event: &Value) -> String {
+    let changes = &event["changes"];
+    let mut changed = Vec::new();
+
+    if changes.get("title").is_some() {
+        changed.push("Title changed");
+    }
+    if changes.get("body").is_some() {
+        changed.push("Description changed");
+    }
+    if changes.get("base").is_some() {
+        changed.push("Target branch changed");
+    }
+
+    if changed.is_empty() {
+        "PR details changed".into()
+    } else {
+        changed.join(" · ")
+    }
+}
+
+fn requested_reviewers(pr: &Value) -> Option<String> {
     let reviewers = pr["requested_reviewers"]
         .as_array()
         .into_iter()
@@ -93,90 +128,110 @@ fn requested_reviewers(pr: &Value) -> String {
         )
         .collect::<Vec<_>>();
 
-    if reviewers.is_empty() {
-        "N/A".into()
-    } else {
-        reviewers.join(", ")
-    }
+    (!reviewers.is_empty()).then(|| reviewers.join(", "))
+}
+
+fn single_line(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn truncate(value: &str, limit: usize) -> String {
+    value.chars().take(limit).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn follows_template_with_a_short_description() {
-        let event = json!({
-            "action": "opened",
+    fn pr(action: &str) -> Value {
+        json!({
+            "action": action,
             "pull_request": {
                 "number": 42,
                 "title": "Fix [login]\nredirect",
                 "html_url": "https://github.com/itlogsandwich/test-repo/pull/42",
                 "body": "## Summary\n\u{feff}Short overview of the fix.\nMore details follow.",
-                "created_at": "2026-10-09T00:27:23Z",
-                "user": { "login": "author" },
-                "requested_reviewers": [{ "login": "reviewer" }],
-                "requested_teams": [{ "slug": "backend" }]
+                "user": { "login": "author" }
             }
-        });
+        })
+    }
 
-        let content = message(&event).unwrap();
+    #[test]
+    fn opened_pr_is_a_compact_embed() {
+        let mut event = pr("opened");
+        event["pull_request"]["requested_reviewers"] = json!([{ "login": "reviewer" }]);
+        event["pull_request"]["requested_teams"] = json!([{ "slug": "backend" }]);
+
         assert_eq!(
-            content,
-            "**PR**: [Fix (login) redirect #42](https://github.com/itlogsandwich/test-repo/pull/42)\n**DESCRIPTION**: Short overview of the fix.\n**STATUS**: OPENED\n**AUTHOR**: author\n**REVIEWER**: reviewer, backend\n**DATE**: 2026-10-09"
+            payload(&event).unwrap(),
+            json!({
+                "embeds": [{
+                    "title": "OPENED · #42 Fix [login] redirect",
+                    "url": "https://github.com/itlogsandwich/test-repo/pull/42",
+                    "color": 0x238636,
+                    "footer": { "text": "PR by author" },
+                    "description": "Short overview of the fix.",
+                    "fields": [{ "name": "Reviewers", "value": "reviewer, backend", "inline": true }]
+                }],
+                "allowed_mentions": { "parse": [] }
+            })
         );
     }
 
     #[test]
-    fn handles_missing_body_and_caps_long_title() {
-        let event = json!({
-            "action": "opened",
-            "pull_request": {
-                "number": 42,
-                "title": format!("@everyone {}", "x".repeat(2500)),
-                "html_url": "https://github.com/itlogsandwich/test-repo/pull/42",
-                "body": null,
-                "created_at": "2026-10-09T00:27:23Z",
-                "user": { "login": "author" }
-            }
-        });
+    fn edited_pr_describes_only_the_changed_details() {
+        let mut event = pr("edited");
+        event["changes"] = json!({ "title": { "from": "Old" }, "body": { "from": "Old body" } });
 
-        let content = message(&event).unwrap();
-        assert!(content.starts_with("**PR**: [@everyone "));
-        assert!(content.contains(" #42](https://github.com/itlogsandwich/test-repo/pull/42)"));
-        assert!(content.ends_with(
-            "\n**DESCRIPTION**: No description provided.\n**STATUS**: OPENED\n**AUTHOR**: author\n**REVIEWER**: N/A\n**DATE**: 2026-10-09"
-        ));
-        assert_eq!(content.chars().count(), 2000);
+        let embed = &payload(&event).unwrap()["embeds"][0];
+        assert_eq!(
+            embed["description"],
+            "Title changed · Description changed\nShort overview of the fix."
+        );
+        assert!(embed.get("fields").is_none());
+
+        event["changes"] = json!({ "base": { "ref": { "from": "develop" } } });
+        let embed = &payload(&event).unwrap()["embeds"][0];
+        assert_eq!(embed["description"], "Target branch changed");
     }
 
     #[test]
-    fn labels_updated_and_closed_prs() {
-        for (action, merged, label) in [
-            ("synchronize", None, "CHANGES PUSHED"),
-            ("edited", None, "EDITED"),
-            ("closed", Some(true), "MERGED"),
-            ("closed", Some(false), "CLOSED"),
+    fn labels_and_colors_lifecycle_cards() {
+        for (action, merged, label, color) in [
+            ("synchronize", None, "CHANGES PUSHED", 0x58a6ff),
+            ("edited", None, "EDITED", 0xd29922),
+            ("closed", Some(true), "MERGED", 0x8957e5),
+            ("closed", Some(false), "CLOSED", 0x8b949e),
         ] {
-            let event = json!({
-                "action": action,
-                "pull_request": {
-                    "number": 42,
-                    "title": "Title",
-                    "html_url": "https://github.com/owner/repo/pull/42",
-                    "body": "Description",
-                    "created_at": "2026-10-09T00:27:23Z",
-                    "user": { "login": "author" },
-                    "merged": merged
-                }
-            });
+            let mut event = pr(action);
+            event["pull_request"]["merged"] = json!(merged);
+            let embed = &payload(&event).unwrap()["embeds"][0];
 
-            assert!(
-                message(&event)
-                    .unwrap()
-                    .contains(&format!("\n**STATUS**: {label}\n"))
-            );
+            assert!(embed["title"].as_str().unwrap().starts_with(label));
+            assert_eq!(embed["color"], color);
         }
+    }
+
+    #[test]
+    fn caps_embed_fields_and_omits_empty_optional_content() {
+        let mut event = pr("opened");
+        event["pull_request"]["title"] = json!(format!("@everyone {}", "x".repeat(500)));
+        event["pull_request"]["body"] = Value::Null;
+        event["pull_request"]["requested_reviewers"] = json!([{ "login": "r".repeat(2000) }]);
+
+        let output = payload(&event).unwrap();
+        let embed = &output["embeds"][0];
+        assert_eq!(embed["title"].as_str().unwrap().chars().count(), 256);
+        assert!(embed.get("description").is_none());
+        assert_eq!(
+            embed["fields"][0]["value"]
+                .as_str()
+                .unwrap()
+                .chars()
+                .count(),
+            1024
+        );
+        assert_eq!(output["allowed_mentions"], json!({ "parse": [] }));
     }
 
     #[test]
@@ -184,7 +239,7 @@ mod tests {
         let event = json!({ "action": "closed", "pull_request": {} });
 
         assert_eq!(
-            message(&event).unwrap_err().to_string(),
+            payload(&event).unwrap_err().to_string(),
             "missing merged status for closed PR"
         );
     }
