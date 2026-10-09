@@ -7,9 +7,9 @@ Discord webhook.
 Message format:
 
 ```
-**EVENT**: OPENED
 **PR**: [Fix login redirect #42](https://github.com/you/repo/pull/42)
 **DESCRIPTION**: Short overview of the fix.
+**STATUS**: OPENED
 **AUTHOR**: author
 **REVIEWER**: reviewer, backend
 **DATE**: 2026-10-09

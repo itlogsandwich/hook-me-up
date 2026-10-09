@@ -56,10 +56,10 @@ fn message(event: &Value) -> Result<String, Box<dyn Error>> {
     let reviewers = requested_reviewers(pr);
 
     let after = format!(
-        " #{number}]({url})\n**DESCRIPTION**: {description}\n**AUTHOR**: {author}\n**REVIEWER**: {reviewers}\n**DATE**: {date}"
+        " #{number}]({url})\n**DESCRIPTION**: {description}\n**STATUS**: {event_label}\n**AUTHOR**: {author}\n**REVIEWER**: {reviewers}\n**DATE**: {date}"
     );
     let title_space = 2000usize
-        .checked_sub(format!("**EVENT**: {event_label}\n**PR**: [").len() + after.chars().count())
+        .checked_sub("**PR**: [".len() + after.chars().count())
         .ok_or("PR metadata exceeds Discord message limit")?;
     // Discord ignores backslash escapes inside a masked-link label, so `\[` would show the
     // backslash and a bare `]` would end the link early: swap brackets for parentheses.
@@ -75,9 +75,7 @@ fn message(event: &Value) -> Result<String, Box<dyn Error>> {
         })
         .take(title_space)
         .collect();
-    Ok(format!(
-        "**EVENT**: {event_label}\n**PR**: [{linked_title}{after}"
-    ))
+    Ok(format!("**PR**: [{linked_title}{after}"))
 }
 
 fn requested_reviewers(pr: &Value) -> String {
@@ -125,7 +123,7 @@ mod tests {
         let content = message(&event).unwrap();
         assert_eq!(
             content,
-            "**EVENT**: OPENED\n**PR**: [Fix (login) redirect #42](https://github.com/itlogsandwich/test-repo/pull/42)\n**DESCRIPTION**: Short overview of the fix.\n**AUTHOR**: author\n**REVIEWER**: reviewer, backend\n**DATE**: 2026-10-09"
+            "**PR**: [Fix (login) redirect #42](https://github.com/itlogsandwich/test-repo/pull/42)\n**DESCRIPTION**: Short overview of the fix.\n**STATUS**: OPENED\n**AUTHOR**: author\n**REVIEWER**: reviewer, backend\n**DATE**: 2026-10-09"
         );
     }
 
@@ -144,10 +142,10 @@ mod tests {
         });
 
         let content = message(&event).unwrap();
-        assert!(content.starts_with("**EVENT**: OPENED\n**PR**: [@everyone "));
+        assert!(content.starts_with("**PR**: [@everyone "));
         assert!(content.contains(" #42](https://github.com/itlogsandwich/test-repo/pull/42)"));
         assert!(content.ends_with(
-            "\n**DESCRIPTION**: No description provided.\n**AUTHOR**: author\n**REVIEWER**: N/A\n**DATE**: 2026-10-09"
+            "\n**DESCRIPTION**: No description provided.\n**STATUS**: OPENED\n**AUTHOR**: author\n**REVIEWER**: N/A\n**DATE**: 2026-10-09"
         ));
         assert_eq!(content.chars().count(), 2000);
     }
@@ -176,7 +174,7 @@ mod tests {
             assert!(
                 message(&event)
                     .unwrap()
-                    .starts_with(&format!("**EVENT**: {label}\n"))
+                    .contains(&format!("\n**STATUS**: {label}\n"))
             );
         }
     }
