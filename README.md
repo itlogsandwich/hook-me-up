@@ -66,5 +66,3 @@ control upgrades.
 cargo test
 cargo run   # needs GITHUB_EVENT_PATH and DISCORD_WEBHOOK_URL
 ```
-
-`TEMPLATE.md` documents the intended message shape; it is not read at runtime.
