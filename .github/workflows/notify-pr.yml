@@ -1,0 +1,28 @@
+name: Notify Discord on PR
+
+on:
+  pull_request_target:
+    types: [opened]
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    environment:
+      name: discord-notify
+      deployment: false
+    steps:
+      # Checks out the notifier, never the pull request's code: the job holds the
+      # webhook secret. Pin `ref` to a tag or SHA if you want releases, not latest.
+      - uses: actions/checkout@v7
+        with:
+          repository: itlogsandwich/pr-notify-dc
+          ref: main
+          persist-credentials: false
+      - run: cargo run --locked --quiet
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
