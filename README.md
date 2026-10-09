@@ -1,21 +1,24 @@
 # pr-notify-dc
 
-Posts a Discord message when a pull request is opened. A small Rust binary run from
+Posts a Discord message when a pull request is opened, updated, merged, or closed. A small Rust binary run from
 a GitHub Actions workflow: it reads the event at `GITHUB_EVENT_PATH` and POSTs to a
 Discord webhook.
 
 Message format:
 
 ```
+**EVENT**: OPENED
 **PR**: [Fix login redirect #42](https://github.com/you/repo/pull/42)
 **DESCRIPTION**: Short overview of the fix.
 **AUTHOR**: author
+**REVIEWER**: reviewer, backend
 **DATE**: 2026-10-09
 ```
 
 The description is the first non-empty, non-heading line of the PR body, capped at
-240 characters. Mentions are inert (`allowed_mentions.parse` is empty), and the
-whole message is trimmed to Discord's 2000-character limit.
+240 characters. `REVIEWER` lists outstanding requested users and teams, or `N/A`.
+Mentions are inert (`allowed_mentions.parse` is empty), and the whole message is
+trimmed to Discord's 2000-character limit.
 
 ## Use it in your repo
 
@@ -29,7 +32,7 @@ name: Notify Discord on PR
 
 on:
   pull_request_target:
-    types: [opened]
+    types: [opened, synchronize, edited, closed]
     branches: [develop, main]
 
 permissions:
