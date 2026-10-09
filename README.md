@@ -27,9 +27,12 @@ capped to Discord's 256, 1,024, and 2,048-character limits.
 
 ## Use it in your repo
 
-1. Create a Discord webhook for the target channel.
-2. In your repo, add an environment named `discord-notify` with a secret
-   `DISCORD_WEBHOOK_URL`.
+1. Create one Discord webhook for the PR channel and another for the issue channel.
+2. In your repo, create these GitHub environments:
+
+   - `discord-pr-notify`, with `DISCORD_WEBHOOK_URL` set to the PR webhook.
+   - `discord-issue-notify`, with `DISCORD_WEBHOOK_URL` set to the issue webhook.
+
 3. Copy [`example.yml`](example.yml) to `.github/workflows/notify-discord.yml` in
    your repository. Remove either trigger if you only want pull-request or issue
    notifications.
@@ -42,6 +45,11 @@ on:
   issues:
     types: [opened, edited, closed, reopened]
 ```
+
+The workflow has one job. It selects `discord-issue-notify` for an `issues` event and
+`discord-pr-notify` for a pull-request event, then reads `DISCORD_WEBHOOK_URL` from
+that environment. Only the selected webhook receives the message. To use one Discord
+channel for everything, save the same webhook URL in both environments.
 
 `pull_request_target` runs the workflow from your default branch with access to the
 secret; the PR's own code is never checked out or executed. Public repositories may

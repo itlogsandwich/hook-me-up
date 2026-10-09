@@ -15,7 +15,7 @@ jobs:
     if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-24.04
     environment:
-      name: discord-notify
+      name: ${{ github.event_name == 'issues' && 'discord-issue-notify' || 'discord-pr-notify' }}
       deployment: false
     steps:
       # Checks out the notifier, never pull-request code that could access the secret.
