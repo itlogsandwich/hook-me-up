@@ -1,24 +1,28 @@
 # pr-notify-dc
 
-Posts a Discord message when a pull request is opened, updated, merged, or closed. A small Rust binary run from
+Posts a compact Discord embed when a pull request is opened, updated, merged, or closed. A small Rust binary run from
 a GitHub Actions workflow: it reads the event at `GITHUB_EVENT_PATH` and POSTs to a
 Discord webhook.
 
 Message format:
 
 ```
-**PR**: [Fix login redirect #42](https://github.com/you/repo/pull/42)
-**DESCRIPTION**: Short overview of the fix.
-**STATUS**: OPENED
-**AUTHOR**: author
-**REVIEWER**: reviewer, backend
-**DATE**: 2026-10-09
+OPENED · #42 Fix login redirect
+Short overview of the fix.
+Reviewers: reviewer, backend
+PR by author
 ```
 
-The description is the first non-empty, non-heading line of the PR body, capped at
-240 characters. `REVIEWER` lists outstanding requested users and teams, or `N/A`.
-Mentions are inert (`allowed_mentions.parse` is empty), and the whole message is
-trimmed to Discord's 2000-character limit.
+The card title links to the PR. Opened PRs show the first non-empty, non-heading line
+of the PR body, capped at 240 characters, and outstanding requested users or teams.
+Edited PRs identify the title, description, or target-branch changes; a new summary is
+shown only when the description changed. Pushes, merges, and unmerged closures keep to
+the title and author. Discord timestamps each card, so the PR creation date is omitted.
+
+Each event has a distinct color and an explicit text label: opened (green), changes
+pushed (blue), edited (amber), merged (purple), and closed (gray). Mentions are inert
+(`allowed_mentions.parse` is empty). Embed titles, reviewer fields, and footer text are
+capped to Discord's 256, 1,024, and 2,048-character limits.
 
 ## Use it in your repo
 
