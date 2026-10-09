@@ -21,6 +21,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn payload(event: &Value) -> Result<Value, Box<dyn Error>> {
+    if event.get("issue").is_some() {
+        return issue_payload(event);
+    }
+
     let pr = &event["pull_request"];
     let (event_label, color) = match event["action"].as_str() {
         Some("opened") => ("OPENED", 0x238636),
@@ -63,9 +67,59 @@ fn payload(event: &Value) -> Result<Value, Box<dyn Error>> {
             }
         }
         Some("edited") => {
-            description.push(edit_summary(event));
+            description.push(edit_summary(event, "PR"));
             if event["changes"].get("body").is_some()
                 && let Some(summary) = summary(pr)
+            {
+                description.push(summary);
+            }
+        }
+        _ => {}
+    }
+
+    if !description.is_empty() {
+        embed["description"] = Value::String(description.join("\n"));
+    }
+
+    Ok(json!({
+        "embeds": [embed],
+        "allowed_mentions": { "parse": [] },
+    }))
+}
+
+fn issue_payload(event: &Value) -> Result<Value, Box<dyn Error>> {
+    let issue = &event["issue"];
+    let (event_label, color) = match event["action"].as_str() {
+        Some("opened") => ("ISSUE OPENED", 0x238636),
+        Some("edited") => ("ISSUE EDITED", 0xd29922),
+        Some("closed") => ("ISSUE CLOSED", 0x8b949e),
+        Some("reopened") => ("ISSUE REOPENED", 0x58a6ff),
+        _ => return Err("expected a supported issue event".into()),
+    };
+    let number = issue["number"].as_u64().ok_or("missing issue number")?;
+    let title = issue["title"].as_str().ok_or("missing issue title")?;
+    let url = issue["html_url"].as_str().ok_or("missing issue URL")?;
+    let author = issue["user"]["login"]
+        .as_str()
+        .ok_or("missing issue author")?;
+    let mut embed = json!({
+        "title": truncate(&format!("{event_label} · #{number} {}", single_line(title)), 256),
+        "url": url,
+        "color": color,
+        "footer": { "text": truncate(&format!("Issue by {author}"), 2048) },
+    });
+
+    let mut description = Vec::new();
+    match event["action"].as_str() {
+        Some("opened") => {
+            if let Some(summary) = summary(issue) {
+                description.push(summary);
+            }
+        }
+        Some("edited") => {
+            description.push(edit_summary(event, "Issue"));
+            if event["changes"].get("body").is_some()
+                && let Some(summary) = summary(issue)
             {
                 description.push(summary);
             }
@@ -92,7 +146,7 @@ fn summary(pr: &Value) -> Option<String> {
         .map(|line| truncate(line, 240))
 }
 
-fn edit_summary(event: &Value) -> String {
+fn edit_summary(event: &Value, subject: &str) -> String {
     let changes = &event["changes"];
     let mut changed = Vec::new();
 
@@ -107,7 +161,7 @@ fn edit_summary(event: &Value) -> String {
     }
 
     if changed.is_empty() {
-        "PR details changed".into()
+        format!("{subject} details changed")
     } else {
         changed.join(" · ")
     }
@@ -241,6 +295,70 @@ mod tests {
         assert_eq!(
             payload(&event).unwrap_err().to_string(),
             "missing merged status for closed PR"
+        );
+    }
+
+    fn issue(action: &str) -> Value {
+        json!({
+            "action": action,
+            "issue": {
+                "number": 7,
+                "title": "Fix issue\nnotifications",
+                "html_url": "https://github.com/itlogsandwich/hook-me-up/issues/7",
+                "body": "## Context\nNotify Discord when this changes.",
+                "user": { "login": "reporter" }
+            }
+        })
+    }
+
+    #[test]
+    fn issue_lifecycle_uses_compact_embeds() {
+        for (action, label, color, description) in [
+            (
+                "opened",
+                "ISSUE OPENED",
+                0x238636,
+                Some("Notify Discord when this changes."),
+            ),
+            (
+                "edited",
+                "ISSUE EDITED",
+                0xd29922,
+                Some("Issue details changed"),
+            ),
+            ("closed", "ISSUE CLOSED", 0x8b949e, None),
+            ("reopened", "ISSUE REOPENED", 0x58a6ff, None),
+        ] {
+            let output = payload(&issue(action)).unwrap();
+            let embed = &output["embeds"][0];
+
+            assert_eq!(
+                embed["title"],
+                format!("{label} · #7 Fix issue notifications")
+            );
+            assert_eq!(embed["color"], color);
+            assert_eq!(embed["footer"]["text"], "Issue by reporter");
+            assert_eq!(embed["description"].as_str(), description);
+            assert_eq!(output["allowed_mentions"], json!({ "parse": [] }));
+        }
+    }
+
+    #[test]
+    fn edited_issue_describes_changed_details() {
+        let mut event = issue("edited");
+        event["changes"] = json!({ "title": { "from": "Old" }, "body": { "from": "Old body" } });
+
+        assert_eq!(
+            payload(&event).unwrap()["embeds"][0]["description"],
+            "Title changed · Description changed\nNotify Discord when this changes."
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_issue_events() {
+        assert_eq!(
+            payload(&issue("labeled")).unwrap_err().to_string(),
+            "expected a supported issue event"
         );
     }
 }
